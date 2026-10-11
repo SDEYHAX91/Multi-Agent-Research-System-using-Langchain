@@ -127,7 +127,3 @@ Python · LangChain · Tavily · BeautifulSoup · Streamlit · Groq · OpenRoute
 ## 🤝 Contributing
 
 Contributions are welcome. Fork the repo, create a feature branch, and open a pull request.
-
-## 📄 License
-
-Distributed under the MIT License. Add a `LICENSE` file before publishing.
