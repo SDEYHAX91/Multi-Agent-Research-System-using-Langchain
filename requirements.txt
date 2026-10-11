@@ -1,0 +1,13 @@
+streamlit
+langchain
+langchain-core
+langchain-groq
+langchain-openrouter
+langchain-google-genai
+langchain-cohere
+langchain-nvidia-ai-endpoints
+tavily-python
+requests
+beautifulsoup4
+python-dotenv
+rich
