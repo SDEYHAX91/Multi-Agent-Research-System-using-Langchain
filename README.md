@@ -77,11 +77,11 @@ Copy `.env.example` to `.env` and fill in your keys:
 TAVILY_API_KEY=your_key
 
 # Add the providers you want to use (those without a key are skipped automatically)
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
-GOOGLE_API_KEY=
-COHERE_API_KEY=
-NVIDIA_API_KEY=
+GROQ_API_KEY=your_key
+OPENROUTER_API_KEY=your_key
+GOOGLE_API_KEY=your_key
+COHERE_API_KEY=your_key
+NVIDIA_API_KEY=your_key
 ```
 
 > ⚠️ Never commit your `.env` file.
