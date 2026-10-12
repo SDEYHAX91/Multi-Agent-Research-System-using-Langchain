@@ -2,7 +2,7 @@
 
 > Four specialized AI agents collaborate — **searching, scraping, writing, and critiquing** — to turn any topic into a polished, source-backed research report.
 
-Built with **LangChain**, **Tavily**, and **Streamlit**, with automatic multi-provider LLM fail-over so a single rate limit never breaks a run.
+Built with **LangChain**, **Tavily**, and **Streamlit**, with automatic multi-provider LLM fail-over so a single rate limit never breaks a run, and a built-in **login / account system** so every user gets their own private research history.
 
 Try: https://multi-agent-research-system-using-28d2.onrender.com/
 
@@ -10,7 +10,7 @@ Try: https://multi-agent-research-system-using-28d2.onrender.com/
 
 ## 📌 Overview
 
-ResearchScribe is a sequential multi-agent pipeline. You enter a topic; each agent handles one stage and hands its output to the next:
+ResearchScribe is a sequential multi-agent pipeline. You sign in, enter a topic; each agent handles one stage and hands its output to the next:
 
 | # | Agent | Role | Tool | Default Model |
 |---|-------|------|------|---------------|
@@ -22,18 +22,22 @@ ResearchScribe is a sequential multi-agent pipeline. You enter a topic; each age
 ## ✨ Features
 
 - **End-to-end research pipeline** — from a single topic to a reviewed report
+- **User accounts** — login and account creation (SQLite + salted PBKDF2-SHA256 password hashing); the app is locked until you sign in
+- **Logout with confirmation** — a "Log out?" dialog in the sidebar; logging out clears the whole session so nothing leaks to the next user
+- **Private, per-account history** — each user's past reports are saved separately and reloadable from the sidebar
 - **Streamlit web UI** with live per-step progress and timings
 - **LLM fail-over** (`llm_failsafe.py`) — on rate limit, quota, auth, or timeout errors, calls are retried on the next model/provider, with per-model cooldowns
 - **Role-based model routing** — each agent has its own preferred model and fallbacks
-- **Research history** — past reports saved locally and reloadable from the sidebar
 - **AI-generated topic suggestions** to get started quickly
 - **Download reports** as Markdown (`.md`)
-- **CLI mode** for running the pipeline in the terminal
+- **CLI mode** for running the pipeline in the terminal (no login required)
 
 ## 🏗️ Architecture
 
 ```
-Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─▶ Report + Review
+            ┌─ Login / Create Account (auth.py, users.db) ─┐
+            ▼                                              │ Log out
+Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─┘
           (Tavily)        (Scraper)      (Report)   (Score)
               └──────── llm_failsafe.py: model fail-over per role ────────┘
 ```
@@ -42,11 +46,14 @@ Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─▶
 
 ```
 .
-├── app.py            # Streamlit UI (progress, history, report download)
+├── app.py            # Streamlit UI (login gate, progress, history, report download)
+├── auth.py           # Authentication: users DB, login/sign-up page, logout dialog
 ├── pipeline.py       # Orchestrates the 4-step pipeline (CLI entry point)
 ├── agents.py         # Search/Reader agents, Writer & Critic chains, prompts
 ├── tools.py          # web_search (Tavily) and scrape_url (BeautifulSoup) tools
 ├── llm_failsafe.py   # Multi-provider model fail-over and role chains
+├── users.db          # SQLite user accounts (auto-created if missing; do NOT commit)
+├── history/          # Per-user research history, user_<id>.json (auto-created; do NOT commit)
 ├── ICON.png          # Project icon
 ├── requirements.txt
 ├── .env.example
@@ -57,6 +64,7 @@ Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─▶
 
 ### Prerequisites
 - Python 3.10+
+- Streamlit 1.37+ (required for the logout confirmation dialog)
 - A [Tavily](https://tavily.com) API key (required for search)
 - At least one LLM provider key (see below)
 
@@ -84,9 +92,18 @@ OPENROUTER_API_KEY=your_key
 GOOGLE_API_KEY=your_key
 COHERE_API_KEY=your_key
 NVIDIA_API_KEY=your_key
+
+# Optional: store the accounts database somewhere else (default: users.db next to app.py)
+# AUTH_DB_PATH=/var/data/users.db
 ```
 
-> ⚠️ Never commit your `.env` file.
+> ⚠️ Never commit your `.env` file, `users.db`, or the `history/` folder. Add them to `.gitignore`:
+> ```
+> .env
+> users.db
+> history/
+> research_history.json
+> ```
 
 ### Run
 
@@ -94,6 +111,8 @@ NVIDIA_API_KEY=your_key
 ```bash
 streamlit run app.py
 ```
+
+On first launch, open the **✨ Create Account** tab to register, then sign in from the **🔑 Login** tab. `users.db` is created automatically.
 
 **Command line**
 ```bash
@@ -104,6 +123,29 @@ python pipeline.py
 ```bash
 python llm_failsafe.py
 ```
+
+## 🔐 Authentication
+
+- Passwords are hashed with **PBKDF2-HMAC-SHA256** (200,000 rounds) using a unique random salt per user; plain-text passwords are never stored.
+- Emails are unique and stored lowercase; passwords must be 8–128 characters.
+- Login failures return one generic message ("Invalid email or password") so account existence isn't revealed.
+- History is stored per account in `history/user_<id>.json`. If you are upgrading from the pre-login version, the old shared `research_history.json` is migrated to the first account (id 1) the first time it loads.
+- Sessions live in Streamlit's session state, so a browser refresh signs you out.
+
+## ☁️ Deploying on Render
+
+Create a **Web Service** from your GitHub repo with:
+
+| Setting | Value |
+|---------|-------|
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true` |
+
+Then add your API keys (`TAVILY_API_KEY`, `GROQ_API_KEY`, …) under **Environment** — don't commit `.env`.
+
+> ⚠️ **Render's disk is ephemeral.** Without a persistent disk, `users.db` and `history/` are wiped on every deploy or restart, so accounts and saved reports disappear.
+> To keep accounts, attach a **Persistent Disk** (paid plans), mount it at e.g. `/var/data`, and set `AUTH_DB_PATH=/var/data/users.db`.
+> Note: `history/` is currently stored next to `app.py` and is not covered by `AUTH_DB_PATH`.
 
 ## ⚙️ Customizing Models
 
@@ -117,7 +159,7 @@ Supported overrides: `LLM_CHAIN_SEARCH`, `LLM_CHAIN_READER`, `LLM_CHAIN_WRITER`,
 
 ## 🛠️ Tech Stack
 
-Python · LangChain · Tavily · BeautifulSoup · Streamlit · Groq · OpenRouter · Google Gemini · Cohere · NVIDIA NIM
+Python · LangChain · Tavily · BeautifulSoup · Streamlit · SQLite · Groq · OpenRouter · Google Gemini · Cohere · NVIDIA NIM
 
 ## 🗺️ Roadmap
 
@@ -125,6 +167,8 @@ Python · LangChain · Tavily · BeautifulSoup · Streamlit · Groq · OpenRoute
 - [ ] Revision loop: Writer improves the report from Critic feedback
 - [ ] Export to PDF / DOCX
 - [ ] Fail-over for Writer and Critic roles
+- [ ] Persistent login across browser refreshes (cookie-based session)
+- [ ] Configurable history location / hosted database for deployment
 
 ## 🤝 Contributing
 
