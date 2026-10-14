@@ -297,7 +297,6 @@ class _State:
     failures: int = 0
     successes: int = 0
 
-
 # Shared by every role: one model's cooldown / availability applies everywhere.
 _STATE: Dict[str, _State] = {}
 _MODELS: Dict[Tuple[str, float], BaseChatModel] = {}
@@ -439,7 +438,7 @@ class _Registry:
                 except ImportError as exc:
                     self._mark_unavailable(spec, exc)
                     continue
-                except Exception as exc:  # noqa: BLE001 - any failure triggers fail-over
+                except Exception as exc: 
                     self._on_failure(spec, exc, errors)
                     continue
                 self._on_success(spec)
@@ -474,7 +473,7 @@ class _Registry:
                 except ImportError as exc:
                     self._mark_unavailable(spec, exc)
                     continue
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  
                     self._on_failure(spec, exc, errors)
                     continue
                 self._on_success(spec)
