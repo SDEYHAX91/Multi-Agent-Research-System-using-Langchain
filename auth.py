@@ -1,5 +1,9 @@
 """
-Authentication for ResearchScribe (SQLite + PBKDF2, Streamlit UI).
+Authentication for ResearchScribe (Turso/libSQL + PBKDF2, Streamlit UI).
+
+Storage
+-------
+TURSO_DATABASE_URL and TURSO_AUTH_TOKEN set -> users account live in Turso.
 
 Usage in app.py (right after st.set_page_config + CSS):
     from auth import require_login, render_account_sidebar
@@ -7,6 +11,7 @@ Usage in app.py (right after st.set_page_config + CSS):
     ...
     render_account_sidebar()        # inside `with st.sidebar:` -> account info + Log out
 """
+
 import hashlib
 import hmac
 import os
@@ -14,35 +19,125 @@ import re
 import secrets
 import sqlite3
 from pathlib import Path
-import streamlit as st
 
-# Absolute path, so the DB is found no matter which folder `streamlit run` is started from.
-# Override with the AUTH_DB_PATH environment variable if you want it elsewhere.
+import requests
+import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ------------------------------------------------------------------ #
+# Config
+# ------------------------------------------------------------------ #
+TURSO_URL = (os.getenv("TURSO_DATABASE_URL") or "").strip()
+TURSO_TOKEN = (os.getenv("TURSO_AUTH_TOKEN") or "").strip()
+USE_TURSO = bool(TURSO_URL and TURSO_TOKEN)
+
+# Turso gives a libsql:// URL; the HTTP API lives on the same host over https://
+_TURSO_HTTP = TURSO_URL.replace("libsql://", "https://", 1).rstrip("/")
+
+# Local fallback DB (only used when Turso env vars are missing)
 DB = Path(os.getenv("AUTH_DB_PATH") or Path(__file__).with_name("users.db"))
 
-PBKDF2_ROUNDS = 200_000  # must match the hashes already stored in users.db
+PBKDF2_ROUNDS = 200_000  # must match the hashes already stored in the users table
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 MIN_PASSWORD = 8
-MAX_PASSWORD = 128  # PBKDF2 cost grows with input size; cap it
+MAX_PASSWORD = 128  
 MAX_NAME = 80
 MAX_EMAIL = 254
 
 # ------------------------------------------------------------------ #
-# Database
+# Database layer (Turso over HTTP, or local SQLite fallback)
 # ------------------------------------------------------------------ #
+class DuplicateEmail(Exception):
+    """Raised when the email is already registered."""
+
+_CREATE_TABLE = """
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL
+    )
+"""
+
+@st.cache_resource
+def _http() -> requests.Session:
+    """One reusable HTTP session (keeps the TLS connection alive between Streamlit reruns)."""
+    s = requests.Session()
+    s.headers.update(
+        {"Authorization": f"Bearer {TURSO_TOKEN}", "Content-Type": "application/json"}
+    )
+    return s
+
+
+def _to_arg(v) -> dict:
+    if v is None:
+        return {"type": "null"}
+    if isinstance(v, bool):
+        return {"type": "integer", "value": str(int(v))}
+    if isinstance(v, int):
+        return {"type": "integer", "value": str(v)}
+    if isinstance(v, float):
+        return {"type": "float", "value": v}
+    return {"type": "text", "value": str(v)}
+
+
+def _from_cell(cell: dict):
+    t = cell.get("type")
+    if t == "null":
+        return None
+    if t == "integer":
+        return int(cell["value"])
+    if t == "float":
+        return float(cell["value"])
+    return cell.get("value")
+
+
+def _turso_execute(sql: str, args: tuple = ()) -> list[tuple]:
+    payload = {
+        "requests": [
+            {"type": "execute", "stmt": {"sql": sql, "args": [_to_arg(a) for a in args]}},
+            {"type": "close"},
+        ]
+    }
+    resp = _http().post(f"{_TURSO_HTTP}/v2/pipeline", json=payload, timeout=15)
+    resp.raise_for_status()
+    first = resp.json()["results"][0]
+
+    if first["type"] == "error":
+        err = first["error"]
+        msg = err.get("message", "")
+        if "UNIQUE" in msg.upper() or "CONSTRAINT" in str(err.get("code", "")).upper():
+            raise DuplicateEmail(msg)
+        raise RuntimeError(f"Turso error: {msg}")
+
+    result = first["response"]["result"]
+    return [tuple(_from_cell(c) for c in row) for row in result["rows"]]
+
+
+def _sqlite_execute(sql: str, args: tuple = ()) -> list[tuple]:
+    try:
+        with sqlite3.connect(DB) as conn:
+            return conn.execute(sql, args).fetchall()
+    except sqlite3.IntegrityError as e:
+        raise DuplicateEmail(str(e)) from e
+
+
+def _execute(sql: str, args: tuple = ()) -> list[tuple]:
+    return (_turso_execute if USE_TURSO else _sqlite_execute)(sql, args)
+
+
+@st.cache_resource
+def _init_db_once() -> bool:
+    _execute(_CREATE_TABLE)
+    return True
+
+
 def init_db() -> None:
-    with sqlite3.connect(DB) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                salt TEXT NOT NULL,
-                password_hash TEXT NOT NULL
-            )
-            """
-        )
+    _init_db_once()  # cached: runs once per server process, not on every Streamlit rerun
+
 
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     salt = salt or secrets.token_hex(16)
@@ -51,34 +146,38 @@ def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
     ).hex()
     return salt, hashed
 
+
 def create_user(name: str, email: str, password: str) -> bool:
     salt, hashed = hash_password(password)
     try:
-        with sqlite3.connect(DB) as conn:
-            conn.execute(
-                "INSERT INTO users (name, email, salt, password_hash) VALUES (?, ?, ?, ?)",
-                (name, email, salt, hashed))
+        _execute(
+            "INSERT INTO users (name, email, salt, password_hash) VALUES (?, ?, ?, ?)",
+            (name, email, salt, hashed),
+        )
         return True
-    except sqlite3.IntegrityError:  # email already registered
+    except DuplicateEmail:  # email already registered
         return False
+
 
 _DUMMY_SALT = secrets.token_hex(16)
 
+
 def authenticate(email: str, password: str) -> dict | None:
-    with sqlite3.connect(DB) as conn:
-        row = conn.execute(
-            "SELECT id, name, email, salt, password_hash FROM users WHERE email = ?",
-            (email,),
-        ).fetchone()
-    if not row:
+    rows = _execute(
+        "SELECT id, name, email, salt, password_hash FROM users WHERE email = ?",
+        (email,),
+    )
+
+    if not rows:
         hash_password(password, _DUMMY_SALT)  # keep timing similar for unknown emails
         return None
 
-    uid, name, mail, salt, stored = row
+    uid, name, mail, salt, stored = rows[0]
     _, computed = hash_password(password, salt)
     if hmac.compare_digest(computed, stored):
         return {"id": uid, "name": name, "email": mail}
     return None
+
 
 # ------------------------------------------------------------------ #
 # Session helpers
@@ -86,11 +185,13 @@ def authenticate(email: str, password: str) -> dict | None:
 def current_user() -> dict | None:
     return st.session_state.get("user")
 
+
 def logout() -> None:
     """Wipe everything (user, history, results...) so nothing leaks to the next login."""
     st.session_state.clear()
 
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
+
 
 @_dialog("Log out?")
 def confirm_logout_dialog() -> None:
@@ -167,6 +268,7 @@ _SIDEBAR_CSS = """
 </style>
 """
 
+
 # ------------------------------------------------------------------ #
 # UI
 # ------------------------------------------------------------------ #
@@ -184,7 +286,15 @@ def _validate_registration(name, email, password, confirm) -> str | None:
     if password != confirm:
         return "Passwords do not match."
     return None
-  
+
+
+def _safe_db_call(fn, *args):
+    """Run a DB call; show a friendly error instead of a stack trace if Turso is unreachable."""
+    try:
+        return fn(*args), None
+    except (requests.RequestException, RuntimeError):
+        return None, "Could not reach the database. Please try again in a moment."
+
 
 def _render_auth_page(app_name: str) -> None:
     st.markdown(_AUTH_CSS, unsafe_allow_html=True)
@@ -196,6 +306,7 @@ def _render_auth_page(app_name: str) -> None:
 <div class="fade-line"></div>""",
         unsafe_allow_html=True,
     )
+
     _, mid, _ = st.columns([1, 1.4, 1])
     with mid:
         with st.container(key="auth_card"):
@@ -219,8 +330,13 @@ def _render_auth_page(app_name: str) -> None:
                     submitted = st.form_submit_button("Login  →", type="primary")
 
                 if submitted:
-                    user = authenticate(email, password) if email and password else None
-                    if user:
+                    if email and password:
+                        user, err = _safe_db_call(authenticate, email, password)
+                    else:
+                        user, err = None, None
+                    if err:
+                        st.error(err)
+                    elif user:
                         st.session_state.user = user
                         st.rerun()
                     else:
@@ -252,15 +368,23 @@ def _render_auth_page(app_name: str) -> None:
                     error = _validate_registration(name, email, password, confirm)
                     if error:
                         st.error(error)
-                    elif create_user(name, email, password):
-                        st.success("Account created! Switch to the Login tab to sign in.")
                     else:
-                        st.error("An account with this email already exists.")
+                        created, err = _safe_db_call(create_user, name, email, password)
+                        if err:
+                            st.error(err)
+                        elif created:
+                            st.success("Account created! Switch to the Login tab to sign in.")
+                        else:
+                            st.error("An account with this email already exists.")
 
 
 def require_login(app_name: str = "ResearchScribe") -> dict:
     """Gate for the whole app. Returns the logged-in user, or shows the auth page and halts the script."""
-    init_db()
+    try:
+        init_db()
+    except (requests.RequestException, RuntimeError):
+        st.error("Could not connect to the user database. Check TURSO_DATABASE_URL / TURSO_AUTH_TOKEN.")
+        st.stop()
     user = current_user()
     if user:
         return user
