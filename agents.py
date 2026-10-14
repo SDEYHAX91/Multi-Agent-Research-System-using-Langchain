@@ -10,9 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# One fail-over model per role (preferred model first, then fallbacks) - see ROLE_CHAINS in llm_failsafe.py
-#   search -> GPT-OSS-120B | reader -> Gemini 3.8 Flash | writer -> Command A+ | critic -> Nemotron 3 Super
-# After a call, e.g. writer_llm.last_used tells you which provider:model actually answered.
+# search -> GPT-OSS-120B | reader -> Gemini 3.8 Flash | writer -> Command A+ | critic -> Nemotron 3 Super
 search_llm = get_model("search", temperature=0.2)
 reader_llm = get_model("reader", temperature=0.2)
 writer_llm = get_model("writer", temperature=0.2)
