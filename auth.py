@@ -3,7 +3,8 @@ Authentication for ResearchScribe (Turso/libSQL + PBKDF2, Streamlit UI).
 
 Storage
 -------
-TURSO_DATABASE_URL and TURSO_AUTH_TOKEN set -> users account live in Turso.
+* If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set -> users live in Turso (use this on Render).
+* Otherwise -> falls back to a local SQLite file (users.db) so local development still works.
 
 Usage in app.py (right after st.set_page_config + CSS):
     from auth import require_login, render_account_sidebar
@@ -52,6 +53,7 @@ MAX_EMAIL = 254
 class DuplicateEmail(Exception):
     """Raised when the email is already registered."""
 
+
 _CREATE_TABLE = """
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +63,7 @@ _CREATE_TABLE = """
         password_hash TEXT NOT NULL
     )
 """
+
 
 @st.cache_resource
 def _http() -> requests.Session:
@@ -136,7 +139,7 @@ def _init_db_once() -> bool:
 
 
 def init_db() -> None:
-    _init_db_once()  # cached: runs once per server process, not on every Streamlit rerun
+    _init_db_once()  
 
 
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -211,6 +214,7 @@ def confirm_logout_dialog() -> None:
             if st.button("Log out", type="primary", use_container_width=True):
                 logout()
                 st.rerun()  # back to the login page
+
 
 # ------------------------------------------------------------------ #
 # Styling (re-uses the CSS variables defined in app.py)
