@@ -1,10 +1,6 @@
 """
 llm_failsafe.py - automatic model / provider fail-over for the multi-agent system.
 
-Drop-in replacement for a single chat model. If the current model hits a token /
-rate / quota limit (or errors out in any other way), the call is transparently
-retried on the next model in the chain - possibly on a completely different provider.
-
     from llm_failsafe import get_model
     search_llm = get_model("search")            # roles: "search" | "reader" | "writer" | "critic"
     writer_llm = get_model("writer")            # each role has its own preferred model + fallbacks
