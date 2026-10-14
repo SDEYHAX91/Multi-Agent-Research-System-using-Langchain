@@ -1,8 +1,11 @@
 """
-ResearchScribe — Multi-Agent Research System (Streamlit UI)
+ResearchScribe — Multi-Agent Research System
+
+# OnRender Link:
+https://multi-agent-research-system-using-28d2.onrender.com/
 
 Run from the project root:
-    streamlit run path_to/app.py
+    streamlit run path/to/app.py
 """
 
 import html
@@ -60,7 +63,8 @@ st.set_page_config(
     page_title=f"{APP_NAME} · Multi-Agent Research",
     page_icon=str(ICON_FILE) if ICON_FILE.exists() else "🧭",
     layout="wide",
-    initial_sidebar_state="expanded")
+    initial_sidebar_state="expanded",
+)
 
 st.markdown(
     """
@@ -313,7 +317,8 @@ header[data-testid="stHeader"] {background: transparent !important;}
 }
 </style>
 """,
-    unsafe_allow_html=True)
+    unsafe_allow_html=True,
+)
 
 # ------------------------------------------------------------------ #
 # Authentication gate — shows login / sign-up and stops here if not signed in
@@ -339,28 +344,32 @@ def to_text(content) -> str:
         return "\n".join(p for p in parts if p)
     return str(content)
 
+
 def fresh_steps():
     return [{"status": "waiting", "secs": None} for _ in STEPS]
+
 
 def history_file() -> Path:
     return HISTORY_DIR / f"user_{st.session_state.user['id']}.json"
 
+
 def load_history() -> list:
     path = history_file()
-    # One-time migration: the very first account (id 1) inherits the old shared history file
     if not path.exists() and st.session_state.user["id"] == 1 and LEGACY_HISTORY_FILE.exists():
         path = LEGACY_HISTORY_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, list) else []
-    except Exception:  return []
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def save_history(history: list) -> None:
     try:
         HISTORY_DIR.mkdir(exist_ok=True)
         history_file().write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:  pass  
+    except Exception: 
+        pass  
 
 
 def md_escape(text: str) -> str:
@@ -377,7 +386,8 @@ def load_item(item_id: str) -> None:
             st.session_state.topic_input = item["topic"]
             st.session_state.steps = [
                 {"status": "done", "secs": timings[i] if i < len(timings) else None}
-                for i in range(len(STEPS))]
+                for i in range(len(STEPS))
+            ]
             break
 
 
@@ -387,10 +397,12 @@ def delete_item(item_id: str) -> None:
     if (st.session_state.result or {}).get("id") == item_id:
         new_research()
 
+
 def clear_history() -> None:
     st.session_state.history = []
     save_history([])
     new_research()
+
 
 def new_research() -> None:
     st.session_state.result = None
@@ -399,13 +411,14 @@ def new_research() -> None:
 
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
 
+
 def _finish_dialog_action(fn, *args) -> None:
     """Run the action in a button callback, then flag the dialog to close on rerun."""
     fn(*args)
     st.session_state["_dialog_done"] = True
 
-@_dialog("Delete this research?")
 
+@_dialog("Delete this research?")
 def confirm_delete_dialog(item_id: str) -> None:
     if st.session_state.pop("_dialog_done", False):
         st.rerun()  # action finished -> close the dialog
@@ -430,7 +443,9 @@ def confirm_delete_dialog(item_id: str) -> None:
                 type="primary",
                 use_container_width=True,
                 on_click=_finish_dialog_action,
-                args=(delete_item, item_id))
+                args=(delete_item, item_id),
+            )
+
 
 @_dialog("Clear all history?")
 def confirm_clear_dialog() -> None:
@@ -440,7 +455,8 @@ def confirm_clear_dialog() -> None:
     st.markdown(
         f'<div class="dlg-note" style="margin-top:0">This will permanently delete all '
         f"<b>{n}</b> saved research run{'s' if n != 1 else ''}. This can't be undone.</div>",
-        unsafe_allow_html=True)
+        unsafe_allow_html=True,
+    )
     st.write("")
     c1, c2 = st.columns(2)
     with c1:
@@ -454,7 +470,8 @@ def confirm_clear_dialog() -> None:
                 type="primary",
                 use_container_width=True,
                 on_click=_finish_dialog_action,
-                args=(clear_history,))
+                args=(clear_history,),
+            )
 
 
 def step_html(i: int, status: str, secs=None) -> str:
@@ -564,9 +581,10 @@ def generate_examples(avoid=None, k: int = 3) -> list:
         topics = [t for t in topics if len(t) <= 40][:k]
         if len(topics) == k:
             return topics
-    except Exception:  
+    except Exception: 
         pass
     return list(FALLBACK_EXAMPLES)
+
 
 # ------------------------------------------------------------------ #
 # Session state
@@ -584,7 +602,8 @@ st.markdown(
 <div class="brand"><span class="b1">Research</span><span class="b2">Scribe</span></div>
 <p class="tagline">Four specialized AI agents collaborate — searching, scraping, writing, and critiquing — to deliver a polished research report on any topic.</p>
 <div class="fade-line"></div>""",
-    unsafe_allow_html=True)
+    unsafe_allow_html=True,
+)
 
 # ------------------------------------------------------------------ #
 # Input (left) + Pipeline (right)
@@ -621,6 +640,8 @@ def set_step(i: int, status: str, secs=None):
     st.session_state.steps[i] = {"status": status, "secs": secs}
     slots[i].markdown(step_html(i, status, secs), unsafe_allow_html=True)
 
+
+# Render current pipeline state
 for idx, s in enumerate(st.session_state.steps):
     slots[idx].markdown(step_html(idx, s["status"], s["secs"]), unsafe_allow_html=True)
 
@@ -639,7 +660,7 @@ if submitted and topic.strip():
         st.session_state.result = new_result
         st.session_state.history = [new_result] + st.session_state.history[: MAX_HISTORY - 1]
         save_history(st.session_state.history)
-    except Exception as e: 
+    except Exception as e:  # noqa: BLE001
         st.error(f"Pipeline failed: {e}")
 
 # ------------------------------------------------------------------ #
