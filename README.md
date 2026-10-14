@@ -30,8 +30,10 @@ ResearchScribe is a sequential multi-agent pipeline. You sign in, enter a topic;
 - **Role-based model routing** — each agent has its own preferred model and fallbacks
 - **AI-generated topic suggestions** to get started quickly
 - **Download reports** as Markdown (`.md`)
-- **CLI mode** for running the pipeline in the terminal (no login required)
 
+<img width="1916" height="989" alt="image" src="https://github.com/user-attachments/assets/33c43acf-2ffd-4250-81fd-7ce900898472" />
+
+  
 ## 🏗️ Architecture
 
 ```
