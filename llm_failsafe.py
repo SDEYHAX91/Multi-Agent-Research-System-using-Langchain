@@ -58,14 +58,41 @@ def _build_mistral(spec: ModelSpec, temperature: float) -> BaseChatModel:
     return ChatMistralAI(model=spec.model, temperature=temperature)
 
 
+def _build_ollama(spec: ModelSpec, temperature: float) -> BaseChatModel:
+    """Use Ollama Cloud when a key is configured, otherwise use local Ollama."""
+    from langchain_ollama import ChatOllama
+
+    api_key = os.getenv("OLLAMA_API_KEY", "").strip()
+    base_url = os.getenv("OLLAMA_BASE_URL", "").strip()
+    kwargs: Dict[str, Any] = {}
+
+    if api_key:
+        base_url = base_url or "https://ollama.com"
+        if "ollama.com" in base_url:
+            # The :cloud suffix is the Ollama CLI alias; direct cloud API uses
+            # the canonical model name (as in Ollama's API examples).
+            model = {
+                "nemotron-3-super:cloud": "nemotron-3-super",
+                "gemma4:31b-cloud": "gemma4:31b",
+            }.get(spec.model, spec.model)
+        else:
+            model = spec.model
+        kwargs["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
+    else:
+        base_url = base_url or "http://localhost:11434"
+        model = spec.model
+
+    return ChatOllama(model=model, temperature=temperature, base_url=base_url, **kwargs)
+
+
 # Order = priority. The first usable model is always tried first, so the app
 # returns to the primary model as soon as its cooldown has expired.
 DEFAULT_CHAIN: List[ModelSpec] = [
     ModelSpec("mistralai", "ministral-14b-2512", builder=_build_mistral),
     ModelSpec("groq", "openai/gpt-oss-120b"),
     ModelSpec("openrouter", "openai/gpt-oss-120b"),
-    ModelSpec("ollama", "nemotron-3-super:cloud"),
-    ModelSpec("ollama", "gemma4:31b-cloud"),
+    ModelSpec("ollama", "nemotron-3-super:cloud", builder=_build_ollama),
+    ModelSpec("ollama", "gemma4:31b-cloud", builder=_build_ollama),
 ]
 
 
@@ -89,6 +116,8 @@ def _chain(*names: str) -> List[ModelSpec]:
         provider, model = _MODELS_BY_NAME[n]
         if provider == "mistralai":
             specs.append(ModelSpec(provider, model, builder=_build_mistral))
+        elif provider == "ollama":
+            specs.append(ModelSpec(provider, model, builder=_build_ollama))
         else:
             specs.append(ModelSpec(provider, model))
     return specs
