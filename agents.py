@@ -10,7 +10,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# search -> GPT-OSS-120B | reader -> Gemini 3.8 Flash | writer -> Command A+ | critic -> Nemotron 3 Super
+# search -> Ministral 14B 2512 (Mistral), then GPT-OSS-20B (Groq)
+# reader -> GPT-OSS-120B (Groq), then GPT-OSS-20B (Groq)
+# writer -> GPT-OSS-120B (OpenRouter), then GPT-OSS-20B (OpenRouter)
+# critic -> Nemotron-3-Super:cloud, then Gemma4:31b-cloud (Ollama)
 search_llm = get_model("search", temperature=0.2)
 reader_llm = get_model("reader", temperature=0.2)
 writer_llm = get_model("writer", temperature=0.2)
