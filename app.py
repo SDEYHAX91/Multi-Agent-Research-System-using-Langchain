@@ -1,11 +1,11 @@
 """
-ResearchScribe — Multi-Agent Research System
+ResearchScribe — Multi-Agent Research System (Streamlit UI)
 
 # OnRender Link:
 https://multi-agent-research-system-using-28d2.onrender.com/
 
 Run from the project root:
-    streamlit run path/to/app.py
+    streamlit run src/multi_agent_research/app.py
 """
 
 import html
@@ -38,8 +38,8 @@ from auth import render_account_sidebar, require_login
 APP_NAME = "ResearchScribe"
 
 STEPS = [
-    ("01", "Search Agent", "Gathers recent web information"),
-    ("02", "Reader Agent", "Scrapes & extracts deep content"),
+    ("01", "Scraping Agent", "Gathers recent web information"),
+    ("02", "Reading Agent", "Scrapes & extracts deep content"),
     ("03", "Writer Chain", "Drafts the full research report"),
     ("04", "Critic Chain", "Reviews & scores the report"),
 ]
@@ -226,6 +226,14 @@ header[data-testid="stHeader"] {background: transparent !important;}
 .stDownloadButton button:hover {background: rgba(25,230,180,.1) !important;}
 
 .stApp [data-testid="stSidebar"] {background: var(--panel) !important; border-right: 1px solid var(--border);}
+.stApp [data-testid="stSidebar"] > div:first-child {height: 100vh !important; overflow: hidden !important;}
+.st-key-sidebar-layout {height: calc(100vh - 1rem) !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important;}
+.st-key-sidebar-layout > [data-testid="stVerticalBlock"] {height: 100% !important; min-height: 0 !important; display: flex !important; flex-direction: column !important;}
+.st-key-sidebar-top {flex: 0 0 auto !important;}
+.st-key-sidebar-scroll {position: relative; flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem;}
+.st-key-sidebar-scroll::after {content: ""; position: sticky; display: block; bottom: 0; height: 1.5rem; margin-top: -1.5rem; background: linear-gradient(transparent, var(--panel)); pointer-events: none;}
+.st-key-sidebar-account {padding-top: .35rem; background: var(--panel);}
+.st-key-sidebar-account .acct-label {margin: .8rem 0 .5rem 0;}
 .side-brand {
   font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.35rem; letter-spacing: -.02em;
   color: var(--text); margin: .2rem 0 1rem 0;
@@ -320,10 +328,12 @@ header[data-testid="stHeader"] {background: transparent !important;}
     unsafe_allow_html=True,
 )
 
+
 # ------------------------------------------------------------------ #
 # Authentication gate — shows login / sign-up and stops here if not signed in
 # ------------------------------------------------------------------ #
 require_login(APP_NAME)
+
 
 # ------------------------------------------------------------------ #
 # Helpers
@@ -345,6 +355,33 @@ def to_text(content) -> str:
     return str(content)
 
 
+_PERSONAL_POV_RE = re.compile(
+    r"\b(?:i|me|my|mine|myself|we|us|our|ours|ourselves|you|your|yours|yourself|yourselves)\b",
+    re.IGNORECASE,
+)
+_TASK_META_RE = re.compile(
+    r"\b(?:as requested|let me know|here(?:'s| is) your|your request|"
+    r"(?:the|this) (?:task|prompt|request) (?:asks?|requires?|is to|was to))\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[\"'“‘(A-Z0-9])")
+
+
+def clean_raw_output(text: str) -> str:
+    """Remove conversational POV and task-request sentences from raw agent panels."""
+    cleaned_lines = []
+    for line in text.splitlines():
+        sentences = _SENTENCE_SPLIT_RE.split(line.strip())
+        kept = [
+            sentence for sentence in sentences
+            if sentence
+            and not _PERSONAL_POV_RE.search(sentence)
+            and not _TASK_META_RE.search(sentence)
+        ]
+        if kept:
+            cleaned_lines.append(" ".join(kept))
+    return "\n".join(cleaned_lines)
+
 def fresh_steps():
     return [{"status": "waiting", "secs": None} for _ in STEPS]
 
@@ -355,6 +392,7 @@ def history_file() -> Path:
 
 def load_history() -> list:
     path = history_file()
+    # One-time migration: the very first account (id 1) inherits the old shared history file
     if not path.exists() and st.session_state.user["id"] == 1 and LEGACY_HISTORY_FILE.exists():
         path = LEGACY_HISTORY_FILE
     try:
@@ -368,8 +406,8 @@ def save_history(history: list) -> None:
     try:
         HISTORY_DIR.mkdir(exist_ok=True)
         history_file().write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception: 
-        pass  
+    except Exception:  # noqa: BLE001
+        pass  # history is a convenience; never break the app because of it
 
 
 def md_escape(text: str) -> str:
@@ -409,6 +447,8 @@ def new_research() -> None:
     st.session_state.steps = fresh_steps()
     st.session_state.topic_input = ""
 
+
+# st.dialog needs Streamlit >= 1.37 (older versions: experimental_dialog)
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
 
 
@@ -495,63 +535,75 @@ def run_pipeline(topic: str, set_step) -> dict:
     """Same 4 steps as pipeline.run_research_pipeline, reporting progress via set_step."""
     state = {"topic": topic}
     timings = {}
+    pipeline_started = time.perf_counter()
     i = 0
     try:
         # 1. Search
         i = 0
         set_step(i, "running")
-        t0 = time.time()
+        t0 = time.perf_counter()
         search_result = build_search_agent().invoke(
-            {"messages": [("user", f"Find recent, reliable and detailed information about: {topic}")]}
+            {
+                "messages": [
+                    (
+                        "user",
+                        f"Find recent, reliable and detailed information about: {topic}. "
+                        "Return factual source titles, URLs, and snippets only; do not address the user "
+                        "or mention this request.",
+                    )
+                ]
+            }
         )
-        state["search_result"] = to_text(search_result["messages"][-1].content)
-        timings[i] = time.time() - t0
+        state["search_result"] = clean_raw_output(to_text(search_result["messages"][-1].content))
+        timings[i] = time.perf_counter() - t0
         set_step(i, "done", timings[i])
 
         # 2. Reader
         i = 1
         set_step(i, "running")
-        t0 = time.time()
+        t0 = time.perf_counter()
         reader_result = build_reader_agent().invoke(
             {
                 "messages": [
                     (
                         "user",
                         f"Based on the following search results about '{topic}'. "
-                        f"Pick the most relevant URL and scrape it for deeper content.\n\n"
-                        f"Search Results:\n{state['search_result'][:800]}",
+                        "Pick the most relevant URL and scrape it for deeper content. "
+                        "Return only factual page information; do not address the user "
+                        "or mention this task.\n\n"
+                        f"Search Results:\n{state['search_result']}",
                     )
                 ]
             }
         )
-        state["scraped_content"] = to_text(reader_result["messages"][-1].content)
-        timings[i] = time.time() - t0
+        state["scraped_content"] = clean_raw_output(to_text(reader_result["messages"][-1].content))
+        timings[i] = time.perf_counter() - t0
         set_step(i, "done", timings[i])
 
         # 3. Writer
         i = 2
         set_step(i, "running")
-        t0 = time.time()
+        t0 = time.perf_counter()
         research_combined = (
             f"SEARCH RESULTS: {state['search_result']} \n\n"
             f"DETAILED SCRAPED CONTENT: {state['scraped_content']}"
         )
         state["report"] = to_text(writer_chain.invoke({"topic": topic, "research": research_combined}))
-        timings[i] = time.time() - t0
+        timings[i] = time.perf_counter() - t0
         set_step(i, "done", timings[i])
 
         # 4. Critic
         i = 3
         set_step(i, "running")
-        t0 = time.time()
+        t0 = time.perf_counter()
         state["feedback"] = to_text(critic_chain.invoke({"report": state["report"]}))
-        timings[i] = time.time() - t0
+        timings[i] = time.perf_counter() - t0
         set_step(i, "done", timings[i])
     except Exception:
         set_step(i, "error")
         raise
 
-    state["total_time"] = sum(timings.values())
+    state["total_time"] = time.perf_counter() - pipeline_started
     state["timings"] = [timings.get(k) for k in range(len(STEPS))]
     return state
 
@@ -581,7 +633,7 @@ def generate_examples(avoid=None, k: int = 3) -> list:
         topics = [t for t in topics if len(t) <= 40][:k]
         if len(topics) == k:
             return topics
-    except Exception: 
+    except Exception:  # noqa: BLE001 - suggestions must never break the page
         pass
     return list(FALLBACK_EXAMPLES)
 
@@ -600,7 +652,7 @@ st.session_state.setdefault("history", load_history())
 st.markdown(
     f"""<div class="eyebrow">Multi-Agent AI System</div>
 <div class="brand"><span class="b1">Research</span><span class="b2">Scribe</span></div>
-<p class="tagline">Four specialized AI agents collaborate — searching, scraping, writing, and critiquing — to deliver a polished research report on any topic.</p>
+<p class="tagline">Four specialized AI agents collaborate — scraping, reading, writing, and critiquing — to deliver a polished research report on any topic.</p>
 <div class="fade-line"></div>""",
     unsafe_allow_html=True,
 )
@@ -676,89 +728,96 @@ if res:
         unsafe_allow_html=True,
     )
 
-    with st.expander("🔍 Search Results (raw)"):
+    report_tab, search_tab, scraped_tab, critic_tab = st.tabs([
+        "📝 Final Research Report",
+        "🔍 Search Results (raw)",
+        "📄 Scraped Content (raw)",
+        "🧐 Critic Review",
+    ])
+
+    with report_tab:
+        with st.container(key="card_report"):
+            st.markdown('<div class="card-label">Final Research Report</div>', unsafe_allow_html=True)
+            st.markdown(res["report"])
+            st.download_button(
+                "⬇ Download report (.md)",
+                data=res["report"],
+                file_name=f"report_{res['topic'][:30].strip().replace(' ', '_')}.md",
+                mime="text/markdown",
+            )
+
+    with search_tab:
         with st.container(key="card_search"):
-            st.markdown('<div class="card-label">Search Agent Output</div>', unsafe_allow_html=True)
-            st.markdown(res["search_result"])
+            st.markdown('<div class="card-label">Scraping Agent Output</div>', unsafe_allow_html=True)
+            st.code(clean_raw_output(res["search_result"]), language=None, wrap_lines=True)
 
-    with st.expander("📄 Scraped Content (raw)"):
+    with scraped_tab:
         with st.container(key="card_scrape"):
-            st.markdown('<div class="card-label">Reader Agent Output</div>', unsafe_allow_html=True)
-            st.markdown(res["scraped_content"])
+            st.markdown('<div class="card-label">Reading Agent Output</div>', unsafe_allow_html=True)
+            st.code(clean_raw_output(res["scraped_content"]), language=None, wrap_lines=True)
 
-    st.write("")
-    with st.container(key="card_report"):
-        st.markdown('<div class="card-label">📝 Final Research Report</div>', unsafe_allow_html=True)
-        st.markdown(res["report"])
-        st.download_button(
-            "⬇ Download report (.md)",
-            data=res["report"],
-            file_name=f"report_{res['topic'][:30].strip().replace(' ', '_')}.md",
-            mime="text/markdown",
-        )
-
-    st.write("")
-    with st.container(key="card_critic"):
-        st.markdown('<div class="card-label">🧐 Critic Review</div>', unsafe_allow_html=True)
-        st.markdown(res["feedback"])
-
-# ------------------------------------------------------------------ #
-# Sidebar — history
+    with critic_tab:
+        with st.container(key="card_critic"):
+            st.markdown('<div class="card-label">Critic Review</div>', unsafe_allow_html=True)
+            st.markdown(res["feedback"])
+# Sidebar — account and history
 # ------------------------------------------------------------------ #
 with st.sidebar:
-    if ICON_FILE.exists():
-        st.image(str(ICON_FILE), width=30)
-    elif LOGO_FILE.exists():
-        st.image(str(LOGO_FILE), width=30)
-    else:  # fallback if icon image is missing
-        st.markdown('<div class="side-brand">Research<span>Scribe</span></div>', unsafe_allow_html=True)
-    with st.container(key="newbtn"):
-        st.button("＋  New research", on_click=new_research, use_container_width=True)
+    with st.container(key="sidebar-layout"):
+        with st.container(key="sidebar-top"):
+            if ICON_FILE.exists():
+                st.image(str(ICON_FILE), width=30)
+            elif LOGO_FILE.exists():
+                st.image(str(LOGO_FILE), width=30)
+            else:  # fallback if icon image is missing
+                st.markdown('<div class="side-brand">Research<span>Scribe</span></div>', unsafe_allow_html=True)
+            with st.container(key="newbtn"):
+                st.button("＋  New research", on_click=new_research, use_container_width=True)
+            with st.container(key="sidebar-account"):
+                render_account_sidebar()  # signed-in user + Log out
 
-    st.markdown('<div class="side-label">HISTORY</div>', unsafe_allow_html=True)
-    history = st.session_state.history
-    active_id = (st.session_state.result or {}).get("id")
+        with st.container(key="sidebar-scroll"):
+            st.markdown('<div class="side-label">HISTORY</div>', unsafe_allow_html=True)
+            history = st.session_state.history
+            active_id = (st.session_state.result or {}).get("id")
 
-    if not history:
-        st.markdown(
-            '<div class="side-empty">No research yet. Your finished runs will be saved here.</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        if active_id:
-            st.markdown(
-                f"<style>.st-key-hist_{active_id} button {{border-color: var(--accent) !important; "
-                f"background: rgba(25,230,180,.08) !important;}}</style>",
-                unsafe_allow_html=True,
-            )
-        with st.container(key="history"):
-            for item in history:
-                iid = item["id"]
-                title = item["topic"] if len(item["topic"]) <= 28 else item["topic"][:27] + "…"
-                words = len(item.get("report", "").split())
-                created = item.get("created_at", "")
-                meta_text = f"{created} · {words:,} words" if created else f"{words:,} words"
-                c1, c2 = st.columns([5, 1], gap="small", vertical_alignment="center")
-                with c1:
-                    st.button(
-                        f"**{md_escape(title)}**\n\n{meta_text}",
-                        key=f"hist_{iid}",
-                        on_click=load_item,
-                        args=(iid,),
-                        use_container_width=True,
-                        help=item["topic"],
-                        wrap=True,
+            if not history:
+                st.markdown(
+                    '<div class="side-empty">No research yet. Your finished runs will be saved here.</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                if active_id:
+                    st.markdown(
+                        f"<style>.st-key-hist_{active_id} button {{border-color: var(--accent) !important; "
+                        f"background: rgba(25,230,180,.08) !important;}}</style>",
+                        unsafe_allow_html=True,
                     )
-                with c2:
-                    if st.button("✕", key=f"del_{iid}", help="Delete"):
-                        confirm_delete_dialog(iid)
-        with st.container(key="clearbtn"):
-            if st.button("Clear all history"):
-                confirm_clear_dialog()
-
-    render_account_sidebar()  # signed-in user + Log out
-
+                with st.container(key="history"):
+                    for item in history:
+                        iid = item["id"]
+                        title = item["topic"] if len(item["topic"]) <= 28 else item["topic"][:27] + "…"
+                        words = len(item.get("report", "").split())
+                        created = item.get("created_at", "")
+                        meta_text = f"{created} · {words:,} words" if created else f"{words:,} words"
+                        c1, c2 = st.columns([5, 1], gap="small", vertical_alignment="center")
+                        with c1:
+                            st.button(
+                                f"**{md_escape(title)}**\n\n{meta_text}",
+                                key=f"hist_{iid}",
+                                on_click=load_item,
+                                args=(iid,),
+                                use_container_width=True,
+                                help=item["topic"],
+                                wrap=True,
+                            )
+                        with c2:
+                            if st.button("✕", key=f"del_{iid}", help="Delete"):
+                                confirm_delete_dialog(iid)
+                with st.container(key="clearbtn"):
+                    if st.button("Clear all history"):
+                        confirm_clear_dialog()
 st.markdown(
-    f'<div class="footer">{APP_NAME} · Powered by LangChain multi-agent pipeline · Built with Streamlit</div>',
-    unsafe_allow_html=True,
+    f'<div class="footer">{APP_NAME} · Powered by LangChain multi-agent pipeline · Built with Streamlit</div>'
+    f'<div class="footer">This process can take few to several minutes. Please be patient.</div>', unsafe_allow_html=True,
 )
