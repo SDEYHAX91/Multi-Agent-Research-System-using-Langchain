@@ -3,9 +3,7 @@ langchain
 langchain-core
 langchain-groq
 langchain-openrouter
-langchain-google-genai
-langchain-cohere
-langchain-nvidia-ai-endpoints
+langchain-ollama
 tavily-python
 requests
 beautifulsoup4
