@@ -1,36 +1,3 @@
-"""
-llm_failsafe.py - automatic model / provider fail-over for the multi-agent system.
-
-    from llm_failsafe import get_model
-    search_llm = get_model("search")            # roles: "search" | "reader" | "writer" | "critic"
-    writer_llm = get_model("writer")            # each role has its own preferred model + fallbacks
-
-    create_agent(model=search_llm, tools=[...]) # agents (tool calling) work
-    prompt | writer_llm | StrOutputParser()     # chains work
-
-Role -> model chain, see ROLE_CHAINS below to change it:
-    search  GPT-OSS-120B on every provider (Groq -> OpenRouter -> NVIDIA -> Cloudflare[off])
-    reader  Gemini 3.8 Flash -> Gemini 3.7 Flash -> Gemini 3.6 Flash
-    writer  Command A+ (Cohere)      - no failsafe for now
-    critic  Nemotron 3 Super (NVIDIA) - no failsafe for now
-Cooldowns are shared across roles: if a model is rate limited for one role, the others skip it too.
-
-Quick self-test (shows which providers are usable, then makes one real call):
-    python llm_failsafe.py
-
-Optional .env override of a chain ("provider:model", comma separated):
-    LLM_CHAIN_WRITER=cohere:command-a-plus-05-2026,groq:openai/gpt-oss-120b
-    (LLM_CHAIN_SEARCH / LLM_CHAIN_READER / LLM_CHAIN_CRITIC likewise; LLM_FALLBACK_CHAIN = no role)
-
-Required API keys (providers without a key / package are skipped automatically):
-    groq          GROQ_API_KEY                         pip install langchain-groq
-    openrouter    OPENROUTER_API_KEY                   pip install langchain-openrouter
-    google_genai  GOOGLE_API_KEY (or GEMINI_API_KEY)   pip install langchain-google-genai
-    cohere        COHERE_API_KEY                       pip install langchain-cohere
-    nvidia        NVIDIA_API_KEY                       pip install langchain-nvidia-ai-endpoints
-    cloudflare    CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID   pip install langchain-cloudflare
-"""
-
 import asyncio
 import logging
 import os
@@ -62,22 +29,15 @@ if not logger.handlers:
 
 
 # ------------------------------------------------------------------ #
-# Providers & default fail-over chain
+# Providers and default fail-over chain
 # ------------------------------------------------------------------ #
 # env: list of "any-of" groups - every group needs at least one variable set.
 PROVIDERS: Dict[str, Dict[str, Any]] = {
     "groq": {"env": [["GROQ_API_KEY"]], "pkg": "langchain-groq"},
+    "mistralai": {"env": [["MISTRAL_API_KEY"]], "pkg": "langchain-mistralai"},
     "openrouter": {"env": [["OPENROUTER_API_KEY"]], "pkg": "langchain-openrouter"},
-    "google_genai": {"env": [["GOOGLE_API_KEY", "GEMINI_API_KEY"]], "pkg": "langchain-google-genai"},
-    "cohere": {"env": [["COHERE_API_KEY"]], "pkg": "langchain-cohere"},
-    "nvidia": {"env": [["NVIDIA_API_KEY"]], "pkg": "langchain-nvidia-ai-endpoints"},
-    "cloudflare": {
-        "env": [["CLOUDFLARE_API_TOKEN"], ["CLOUDFLARE_ACCOUNT_ID"]],
-        "pkg": "langchain-cloudflare",
-    },
+    "ollama": {"env": [], "pkg": "langchain-ollama"},
 }
-PROVIDER_ALIASES = {"gemini": "google_genai", "google": "google_genai", "google-genai": "google_genai"}
-
 
 @dataclass(eq=False)
 class ModelSpec:
@@ -92,23 +52,20 @@ class ModelSpec:
         return f"{self.provider}:{self.model}"
 
 
-def _build_cloudflare(spec: ModelSpec, temperature: float) -> BaseChatModel:
-    from langchain_cloudflare import ChatCloudflareWorkersAI
+def _build_mistral(spec: ModelSpec, temperature: float) -> BaseChatModel:
+    from langchain_mistralai import ChatMistralAI
 
-    return ChatCloudflareWorkersAI(model=spec.model)
+    return ChatMistralAI(model=spec.model, temperature=temperature)
 
 
 # Order = priority. The first usable model is always tried first, so the app
 # returns to the primary model as soon as its cooldown has expired.
 DEFAULT_CHAIN: List[ModelSpec] = [
-    ModelSpec("groq", "openai/gpt-oss-120b"),                      # primary (what agents.py used before)
+    ModelSpec("mistralai", "ministral-14b-2512", builder=_build_mistral),
+    ModelSpec("groq", "openai/gpt-oss-120b"),
     ModelSpec("openrouter", "openai/gpt-oss-120b"),
-    ModelSpec("google_genai", "gemini-3.8-flash"),
-    ModelSpec("cohere", "command-a-plus-05-2026"),
-    ModelSpec("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
-    # Marked as not working in test.py -> off by default. Set enabled=True to try it.
-    ModelSpec("cloudflare", "@cf/openai/gpt-oss-120b", enabled=False, builder=_build_cloudflare),
-    # Hugging Face is intentionally left out.
+    ModelSpec("ollama", "nemotron-3-super:cloud"),
+    ModelSpec("ollama", "gemma4:31b-cloud"),
 ]
 
 
@@ -116,17 +73,13 @@ DEFAULT_CHAIN: List[ModelSpec] = [
 # Per-role assignment: preferred model first, then the best alternatives
 # ------------------------------------------------------------------ #
 _MODELS_BY_NAME = {
-    # GPT-OSS-120B, one entry per provider that hosts it
+    "gpt20_groq": ("groq", "openai/gpt-oss-20b"),
+    "gpt20_or": ("openrouter", "openai/gpt-oss-20b"),
+    "ministral": ("mistralai", "ministral-14b-2512"),
     "gpt120_groq": ("groq", "openai/gpt-oss-120b"),
     "gpt120_or": ("openrouter", "openai/gpt-oss-120b"),
-    "gpt120_nv": ("nvidia", "openai/gpt-oss-120b"),
-    "gpt120_cf": ("cloudflare", "@cf/openai/gpt-oss-120b"),   # off by default (not working in test.py)
-    # Gemini ladder for the reader
-    "gemini": ("google_genai", "gemini-3.8-flash"),
-    "gemini37": ("google_genai", "gemini-3.7-flash"),
-    "gemini36": ("google_genai", "gemini-3.6-flash"),
-    "command": ("cohere", "command-a-plus-05-2026"),
-    "nemotron": ("nvidia", "nvidia/nemotron-3-super-120b-a12b"),
+    "nemotron_ollama": ("ollama", "nemotron-3-super:cloud"),
+    "gemma4_ollama": ("ollama", "gemma4:31b-cloud"),
 }
 
 
@@ -134,22 +87,19 @@ def _chain(*names: str) -> List[ModelSpec]:
     specs = []
     for n in names:
         provider, model = _MODELS_BY_NAME[n]
-        if provider == "cloudflare":
-            specs.append(ModelSpec(provider, model, enabled=False, builder=_build_cloudflare))
+        if provider == "mistralai":
+            specs.append(ModelSpec(provider, model, builder=_build_mistral))
         else:
             specs.append(ModelSpec(provider, model))
     return specs
 
 
 ROLE_CHAINS: Dict[str, List[ModelSpec]] = {
-    # planning, tool choice, function calling: GPT-OSS-120B, failing over across all providers
-    "search": _chain("gpt120_groq", "gpt120_or", "gpt120_nv", "gpt120_cf"),
-    # long scraped pages: Gemini 3.8 -> 3.7 -> 3.6
-    "reader": _chain("gemini", "gemini37", "gemini36"),
-    # structured, source-grounded report writing (no failsafe for now)
-    "writer": _chain("command"),
-    # reasoning, contradictions, missing evidence (no failsafe for now)
-    "critic": _chain("nemotron"),
+    # Preferred model first; later entries are used only if it fails.
+    "search": _chain("ministral", "gpt20_groq"),
+    "reader": _chain("gpt120_groq", "gpt20_groq"),
+    "writer": _chain("gpt120_or", "gpt20_or"),
+    "critic": _chain("nemotron_ollama", "gemma4_ollama"),
 }
 
 
@@ -162,9 +112,7 @@ def chain_from_env(value: str) -> List[ModelSpec]:
             continue
         provider, model = item.split(":", 1)
         provider = provider.strip().lower().replace("-", "_")
-        provider = PROVIDER_ALIASES.get(provider, provider)
-        builder = _build_cloudflare if provider == "cloudflare" else None
-        specs.append(ModelSpec(provider, model.strip(), builder=builder))
+        specs.append(ModelSpec(provider, model.strip()))
     return specs
 
 
@@ -261,7 +209,7 @@ class AllModelsFailedError(RuntimeError):
 
 
 # ------------------------------------------------------------------ #
-# Content normalisation (e.g. Gemini returns a list of blocks)
+# Content normalisation (e.g. providers return a list of content blocks)
 # ------------------------------------------------------------------ #
 _TEXT_LIKE = {"text", "thinking", "reasoning"}
 
@@ -292,6 +240,7 @@ class _State:
     last_category: str = ""
     failures: int = 0
     successes: int = 0
+
 
 # Shared by every role: one model's cooldown / availability applies everywhere.
 _STATE: Dict[str, _State] = {}
@@ -356,8 +305,6 @@ class _Registry:
             if spec.builder:
                 model = spec.builder(spec, self.temperature)
             else:
-                if spec.provider == "google_genai" and not os.getenv("GOOGLE_API_KEY") and os.getenv("GEMINI_API_KEY"):
-                    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
                 model = init_chat_model(
                     model=spec.model,
                     model_provider=spec.provider,
@@ -434,7 +381,7 @@ class _Registry:
                 except ImportError as exc:
                     self._mark_unavailable(spec, exc)
                     continue
-                except Exception as exc: 
+                except Exception as exc:  # noqa: BLE001 - any failure triggers fail-over
                     self._on_failure(spec, exc, errors)
                     continue
                 self._on_success(spec)
@@ -469,7 +416,7 @@ class _Registry:
                 except ImportError as exc:
                     self._mark_unavailable(spec, exc)
                     continue
-                except Exception as exc:  
+                except Exception as exc:  # noqa: BLE001
                     self._on_failure(spec, exc, errors)
                     continue
                 self._on_success(spec)
@@ -580,7 +527,7 @@ def get_model(
     chain              custom list of ModelSpec (overrides role / env vars)
     max_wait           if every model is cooling down but one recovers within this many seconds,
                        wait for it instead of failing
-    normalize_content  flatten list-of-blocks replies (e.g. Gemini) into a plain string
+    normalize_content  flatten list-of-blocks replies (e.g. structured provider responses) into a plain string
 
     A chain can also be overridden from .env: LLM_CHAIN_<ROLE> (or LLM_FALLBACK_CHAIN without a role).
     """
