@@ -14,7 +14,7 @@ ResearchScribe is a sequential multi-agent pipeline. You sign in, enter a topic;
 
 | # | Agent | Role | Tool | Default Model |
 |---|-------|------|------|---------------|
-| 01 | **Search Agent** | Finds recent, reliable web sources | Tavily search | Ministral 14B 2512 |
+| 01 | **Search Agent** | Finds recent, reliable web sources | Tavily search | Ministral 14B |
 | 02 | **Reader Agent** | Scrapes the most relevant page for deep content | BeautifulSoup scraper | GPT-OSS-120B |
 | 03 | **Writer** | Drafts a structured report (Introduction, Key Findings, Conclusion, Sources) | LangChain chain | GPT-OSS-120B |
 | 04 | **Critic** | Scores the report out of 10 with strengths, improvements, and a verdict | LangChain chain | Nemotron 3 Super |
