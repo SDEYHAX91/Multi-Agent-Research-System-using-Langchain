@@ -10,7 +10,7 @@ Try: https://multi-agent-research-system-using-28d2.onrender.com/
 
 ## 📌 Overview
 
-ResearchScribe is a sequential multi-agent pipeline. You sign in, enter a topic; each agent handles one stage and hands its output to the next:
+ResearchScribe is a multi-agent pipeline. Sign in, enter a topic; each agent handles one stage and hands its output to the next:
 
 | # | Agent | Role | Tool | Default Model |
 |---|-------|------|------|---------------|
