@@ -21,27 +21,49 @@ ResearchScribe is a multi-agent pipeline. Sign in, enter a topic; each agent han
 
 ## ✨ Features
 
-- **End-to-end research pipeline** — from a single topic to a reviewed report
-- **User accounts** — login and account creation (SQLite + salted PBKDF2-SHA256 password hashing); the app is locked until you sign in
-- **Logout with confirmation** — a "Log out?" dialog in the sidebar; logging out clears the whole session so nothing leaks to the next user
-- **Private, per-account history** — each user's past reports are saved separately and reloadable from the sidebar
-- **Streamlit web UI** with live per-step progress and timings
-- **LLM fail-over** (`llm_failsafe.py`) — on rate limit, quota, auth, or timeout errors, calls are retried on the next model/provider, with per-model cooldowns
-- **Role-based model routing** — each agent has its own preferred model and fallbacks
-- **AI-generated topic suggestions** to get started quickly
-- **Download reports** as Markdown (`.md`)
-
-<img width="1916" height="989" alt="image" src="https://github.com/user-attachments/assets/33c43acf-2ffd-4250-81fd-7ce900898472" />
+- **End-to-End Multi-Agent Architecture:** Four specialized agents handle search, reading, report writing, and critique.
+- **LLM Failover:** Uses model failover to keep runs working when one provider fails.
+- **Automated Web Search:** Finds relevant, current sources for each topic using Tavily API.
+- **Deep Content Extraction:** Scrapes selected pages using BeautifulSoup for detailed information.
+- **AI-Powered Report Generation:** Automatically generates structured research reports.
+- **Quality Review:** Critiques each report and gives it a score.
+- **Interactive UI:** Streamlit-based user interface for easy interaction.
+- **Pipeline Orchestration:** Seamless coordination of multiple agents
 
   
 ## 🏗️ Architecture
 
 ```
-            ┌─ Login / Create Account (auth.py, users.db) ─┐
-            ▼                                              │ Log out
-Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─┘
-          (Tavily)        (Scraper)      (Report)   (Score)
-              └──────── llm_failsafe.py: model fail-over per role ────────┘
+┌─────────────────────────────┐
+│ Input: Research topic       │
+└──────────────┬──────────────┘
+               ▼
+┌─────────────────────────────┐      ┌──────────────────────────┐
+│ Search Agent                │─────▶│ Tavily web search        │
+│                             │◀─────│ Live web results         │
+└──────────────┬──────────────┘      └──────────────────────────┘
+               ▼
+       Save search results
+               │
+               ▼
+┌─────────────────────────────┐      ┌──────────────────────────┐
+│ Reader Agent                │─────▶│ scrape_url               │
+│                             │◀─────│ BeautifulSoup extraction │
+└──────────────┬──────────────┘      └──────────────────────────┘
+               ▼
+       Save scraped content
+               │_____________________________________
+               |                                    |
+               ▼                                    ▼
+┌─────────────────────────────┐            ┌─────────────────────────────┐ 
+│ Writer Chain                │            │ Critic Chain                │     
+└──────────────┬──────────────┘            └──────────────┬──────────────┘
+               |                                          |
+               ▼                                          |
+┌───────────────────────────────┐                         |
+│ Output                        │<-------------------------
+│ (Final report + critic review)│
+└───────────────────────────────┘
 ```
 
 ## 📁 Project Structure
@@ -58,7 +80,7 @@ Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─┘
 ├── history/          # Per-user research history, user_<id>.json (auto-created; do NOT commit)
 ├── ICON.png          # Project icon
 ├── requirements.txt
-├── .env.example
+├── .env
 └── README.md
 ```
 
@@ -68,7 +90,12 @@ Topic ─▶ Search Agent ─▶ Reader Agent ─▶ Writer ─▶ Critic ─┘
 - Python 3.10+
 - Streamlit 1.37+ (required for the logout confirmation dialog)
 - A [Tavily](https://tavily.com) API key (required for search)
-- At least one LLM provider key (see below)
+- LLM Providers:
+      * Mistral API Key
+      * Groq API Key
+      * Openrouter API Key
+      * Ollama API Key
+- Optional: You can use at least one LLM Providers if you desire (OpenAI, Anthropic, Gemini, etc).
 
 ### Installation
 
@@ -83,23 +110,21 @@ pip install -r requirements.txt
 
 ### Configuration
 
-Copy `.env.example` to `.env` and fill in your keys:
-
 ```env
 TAVILY_API_KEY=your_key
 
 # Add the providers you want to use (those without a key are skipped automatically)
 GROQ_API_KEY=your_key
 OPENROUTER_API_KEY=your_key
-GOOGLE_API_KEY=your_key
-COHERE_API_KEY=your_key
-NVIDIA_API_KEY=your_key
+MISTRAL_API_KEY=your_key
+OLLAMA_API_KEY=your_key
 
-# Optional: store the accounts database somewhere else (default: users.db next to app.py)
-# AUTH_DB_PATH=/var/data/users.db
+# Account and History stored in Turso Database. For that, add these below to the .env file
+TURSO_AUTH_TOKEN
+TURSO_DATABASE_URL
 ```
 
-> ⚠️ Never commit your `.env` file, `users.db`, or the `history/` folder. Add them to `.gitignore`:
+> ⚠️ Never commit the `.env` file, `users.db`, or the `history/` folder. Add them to `.gitignore`:
 > ```
 > .env
 > users.db
@@ -161,7 +186,13 @@ Supported overrides: `LLM_CHAIN_SEARCH`, `LLM_CHAIN_READER`, `LLM_CHAIN_WRITER`,
 
 ## 🛠️ Tech Stack
 
-Python · LangChain · Tavily · BeautifulSoup · Streamlit · SQLite · Groq · OpenRouter · Google Gemini · Cohere · NVIDIA NIM
+Python — application logic
+Streamlit — web interface
+LangChain — agent and model orchestration
+Tavily — web search
+BeautifulSoup — page scraping
+Mistral, Groq, OpenRouter, Ollama — language model providers
+Turso / SQLite — accounts and research history storage
 
 ## 🗺️ Roadmap
 
