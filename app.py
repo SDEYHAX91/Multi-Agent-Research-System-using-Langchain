@@ -65,7 +65,7 @@ MAX_HISTORY = 30
 # Page config + styling
 # ------------------------------------------------------------------ #
 st.set_page_config(
-    page_title=f"{APP_NAME} · Multi-Agent Research",
+    page_title=f"{APP_NAME} · Multi-Agent Research System",
     page_icon=str(ICON_FILE) if ICON_FILE.exists() else "🧭",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -683,7 +683,7 @@ if "history" not in st.session_state:
 # Hero
 # ------------------------------------------------------------------ #
 st.markdown(
-    f"""<div class="eyebrow">Multi-Agent AI System</div>
+    f"""<div class="eyebrow">Multi-Agent Research System</div>
 <div class="brand"><span class="b1">Research</span><span class="b2">Scribe</span></div>
 <p class="tagline">Four specialized AI agents collaborate — scraping, reading, writing, and critiquing — to deliver a polished research report on any topic.</p>
 <div class="fade-line"></div>""",
