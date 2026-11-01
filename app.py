@@ -702,7 +702,7 @@ with left:
             key="topic_input",
             placeholder="e.g. Quantum computing breakthroughs in 2026",
         )
-        submitted = st.form_submit_button("Run Research Pipeline  →", type="primary")
+        submitted = st.form_submit_button("Start Research  →", type="primary")
 
     st.markdown('<div class="try-label">TRY →</div>', unsafe_allow_html=True)
     if "examples" not in st.session_state:
