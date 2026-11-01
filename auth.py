@@ -3,8 +3,10 @@ Authentication for ResearchScribe (Turso/libSQL + PBKDF2, Streamlit UI).
 
 Storage
 -------
-* If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set -> users live in Turso (use this on Render).
-* Otherwise -> falls back to a local SQLite file (users.db) so local development still works.
+* TURSO_DATABASE_URL and TURSO_AUTH_TOKEN set -> users live in Turso (use this on Render).
+* Account Database
+* History Database (per User)
+
 
 Usage in app.py (right after st.set_page_config + CSS):
     from auth import require_login, render_account_sidebar
