@@ -33,7 +33,12 @@ from agents import (
     writer_chain,
 )
 # pyrefly: ignore [missing-import]
-from auth import render_account_sidebar, require_login
+from auth import (
+    load_user_history,
+    render_account_sidebar,
+    require_login,
+    save_user_history,
+)
 
 APP_NAME = "ResearchScribe"
 
@@ -47,7 +52,7 @@ STEPS = [
 # Shown only if the model can't generate suggestions (rate limit, bad output, ...)
 FALLBACK_EXAMPLES = ["LLM agents 2026", "CRISPR gene editing", "Fusion energy progress"]
 
-# History is saved next to this file (one file per account) so it survives refreshes / restarts
+# JSON files are retained only as a one-time migration source for database history.
 HISTORY_DIR = Path(__file__).with_name("history")
 LEGACY_HISTORY_FILE = Path(__file__).with_name("research_history.json")  # pre-login, single shared file
 ICON_FILE = Path(__file__).resolve().parent / "ICON.png"
@@ -391,23 +396,50 @@ def history_file() -> Path:
 
 
 def load_history() -> list:
+    user_id = int(st.session_state.user["id"])
+    try:
+        saved = load_user_history(user_id)
+    except Exception as exc:  # noqa: BLE001
+        st.warning(f"Could not load history from the database: {exc}")
+        saved = None
+
+    if saved is not None:
+        return saved
+
+    # One-time migration: prefer the per-account JSON file, then the old shared
+    # file for the first account. Once imported, the database is authoritative.
     path = history_file()
-    # One-time migration: the very first account (id 1) inherits the old shared history file
-    if not path.exists() and st.session_state.user["id"] == 1 and LEGACY_HISTORY_FILE.exists():
+    if not path.exists() and user_id == 1 and LEGACY_HISTORY_FILE.exists():
         path = LEGACY_HISTORY_FILE
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
-    except Exception:  # noqa: BLE001
-        return []
+        data = data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        data = []
+
+    if data:
+        try:
+            save_user_history(user_id, data[:MAX_HISTORY])
+            data = data[:MAX_HISTORY]
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"Could not migrate this account's existing history: {exc}")
+    return data
 
 
 def save_history(history: list) -> None:
     try:
-        HISTORY_DIR.mkdir(exist_ok=True)
-        history_file().write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:  # noqa: BLE001
-        pass  # history is a convenience; never break the app because of it
+        save_user_history(int(st.session_state.user["id"]), history[:MAX_HISTORY])
+    except Exception as exc:  # noqa: BLE001
+        # Preserve a local recovery copy where possible, but make the failed
+        # database save visible so users know it will not survive a Render restart.
+        try:
+            HISTORY_DIR.mkdir(exist_ok=True)
+            history_file().write_text(
+                json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            pass
+        st.error(f"Could not save history to the database: {exc}")
 
 
 def md_escape(text: str) -> str:
@@ -644,7 +676,8 @@ def generate_examples(avoid=None, k: int = 3) -> list:
 st.session_state.setdefault("topic_input", "")
 st.session_state.setdefault("steps", fresh_steps())
 st.session_state.setdefault("result", None)
-st.session_state.setdefault("history", load_history())
+if "history" not in st.session_state:
+    st.session_state.history = load_history()
 
 # ------------------------------------------------------------------ #
 # Hero
