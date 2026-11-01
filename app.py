@@ -233,12 +233,18 @@ header[data-testid="stHeader"] {background: transparent !important;}
 .stApp [data-testid="stSidebar"] {background: var(--panel) !important; border-right: 1px solid var(--border);}
 .stApp [data-testid="stSidebar"] > div:first-child {height: 100vh !important; overflow: hidden !important;}
 .st-key-sidebar-layout {height: calc(100vh - 1rem) !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important;}
-.st-key-sidebar-layout > [data-testid="stVerticalBlock"] {height: 100% !important; min-height: 0 !important; display: flex !important; flex-direction: column !important;}
+.st-key-sidebar-layout > [data-testid="stVerticalBlock"] {height: 100% !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; overflow: hidden !important;}
 .st-key-sidebar-top {flex: 0 0 auto !important;}
-.st-key-sidebar-scroll {position: relative; flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem;}
+.st-key-sidebar-scroll {position: relative; flex: 1 1 auto !important; height: auto !important; max-height: none !important; min-height: min(400px, calc(100vh - 19rem)) !important; box-sizing: border-box !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scrollbar-gutter: stable;}
+.st-key-sidebar-scroll::-webkit-scrollbar {width: 5px;}
+.st-key-sidebar-scroll::-webkit-scrollbar-track {background: transparent;}
+.st-key-sidebar-scroll::-webkit-scrollbar-thumb {background: var(--border); border-radius: 4px;}
+.st-key-sidebar-scroll::-webkit-scrollbar-thumb:hover {background: var(--muted);}
+.st-key-sidebar-scroll [data-testid="stVerticalBlock"] {min-height: 0 !important;}
 .st-key-sidebar-scroll::after {content: ""; position: sticky; display: block; bottom: 0; height: 1.5rem; margin-top: -1.5rem; background: linear-gradient(transparent, var(--panel)); pointer-events: none;}
-.st-key-sidebar-account {padding-top: .35rem; background: var(--panel);}
+.st-key-sidebar-account {flex: 0 0 auto !important; padding-top: .35rem; background: var(--panel); border-top: 1px solid var(--border);}
 .st-key-sidebar-account .acct-label {margin: .8rem 0 .5rem 0;}
+.st-key-clearbtn {flex: 0 0 auto !important; padding-top: .25rem; padding-bottom: .25rem; background: var(--panel);}
 .side-brand {
   font-family: 'Syne', sans-serif; font-weight: 800; font-size: 1.35rem; letter-spacing: -.02em;
   color: var(--text); margin: .2rem 0 1rem 0;
@@ -260,7 +266,10 @@ header[data-testid="stHeader"] {background: transparent !important;}
 }
 .st-key-newbtn button p {color: var(--accent) !important; font-weight: 600;}
 .st-key-newbtn button:hover {background: rgba(25,230,180,.1) !important;}
-.st-key-history {gap: .45rem !important;}
+.st-key-history {gap: .45rem !important; min-height: 0 !important; max-height: 30rem !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scrollbar-gutter: stable;}
+.st-key-history::-webkit-scrollbar {width: 5px;}
+.st-key-history::-webkit-scrollbar-track {background: transparent;}
+.st-key-history::-webkit-scrollbar-thumb {background: var(--border); border-radius: 4px;}
 .st-key-history [data-testid="stVerticalBlock"] {gap: .45rem !important;}
 .st-key-history [data-testid="stHorizontalBlock"] {align-items: center !important;}
 .st-key-history button {
@@ -702,7 +711,7 @@ with left:
             key="topic_input",
             placeholder="e.g. Quantum computing breakthroughs in 2026",
         )
-        submitted = st.form_submit_button("Start Research  →", type="primary")
+        submitted = st.form_submit_button("Start Research →", type="primary")
 
     st.markdown('<div class="try-label">TRY →</div>', unsafe_allow_html=True)
     if "examples" not in st.session_state:
@@ -799,15 +808,13 @@ with st.sidebar:
     with st.container(key="sidebar-layout"):
         with st.container(key="sidebar-top"):
             if ICON_FILE.exists():
-                st.image(str(ICON_FILE), width=30)
+                st.image(str(ICON_FILE), width=36)
             elif LOGO_FILE.exists():
-                st.image(str(LOGO_FILE), width=30)
+                st.image(str(LOGO_FILE), width=36)
             else:  # fallback if icon image is missing
                 st.markdown('<div class="side-brand">Research<span>Scribe</span></div>', unsafe_allow_html=True)
             with st.container(key="newbtn"):
                 st.button("＋  New research", on_click=new_research, use_container_width=True)
-            with st.container(key="sidebar-account"):
-                render_account_sidebar()  # signed-in user + Log out
 
         with st.container(key="sidebar-scroll"):
             st.markdown('<div class="side-label">HISTORY</div>', unsafe_allow_html=True)
@@ -847,9 +854,13 @@ with st.sidebar:
                         with c2:
                             if st.button("✕", key=f"del_{iid}", help="Delete"):
                                 confirm_delete_dialog(iid)
+            if history:
                 with st.container(key="clearbtn"):
                     if st.button("Clear all history"):
                         confirm_clear_dialog()
+
+        with st.container(key="sidebar-account"):
+            render_account_sidebar()  # signed-in user + Log out, pinned below history
 st.markdown(
     f'<div class="footer">{APP_NAME} · Powered by LangChain multi-agent pipeline · Built with Streamlit</div>'
     f'<div class="footer">This process can take few to several minutes. Please be patient.</div>', unsafe_allow_html=True,
