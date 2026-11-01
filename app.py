@@ -266,7 +266,7 @@ header[data-testid="stHeader"] {background: transparent !important;}
 }
 .st-key-newbtn button p {color: var(--accent) !important; font-weight: 600;}
 .st-key-newbtn button:hover {background: rgba(25,230,180,.1) !important;}
-.st-key-history {gap: .45rem !important; min-height: 0 !important; max-height: 25rem !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scrollbar-gutter: stable;}
+.st-key-history {gap: .45rem !important; min-height: 0 !important; max-height: 24rem !important; overflow-x: hidden !important; overflow-y: auto !important; overscroll-behavior: contain; padding-right: .25rem; scrollbar-width: thin; scrollbar-color: var(--border) transparent; scrollbar-gutter: stable;}
 .st-key-history::-webkit-scrollbar {width: 5px;}
 .st-key-history::-webkit-scrollbar-track {background: transparent;}
 .st-key-history::-webkit-scrollbar-thumb {background: var(--border); border-radius: 4px;}
