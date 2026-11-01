@@ -15,6 +15,7 @@ Usage in app.py (right after st.set_page_config + CSS):
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import secrets
@@ -43,9 +44,10 @@ DB = Path(os.getenv("AUTH_DB_PATH") or Path(__file__).with_name("users.db"))
 PBKDF2_ROUNDS = 200_000  # must match the hashes already stored in the users table
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 MIN_PASSWORD = 8
-MAX_PASSWORD = 128  
+MAX_PASSWORD = 128  # PBKDF2 cost grows with input size; cap it
 MAX_NAME = 80
 MAX_EMAIL = 254
+
 
 # ------------------------------------------------------------------ #
 # Database layer (Turso over HTTP, or local SQLite fallback)
@@ -61,6 +63,14 @@ _CREATE_TABLE = """
         email TEXT UNIQUE NOT NULL,
         salt TEXT NOT NULL,
         password_hash TEXT NOT NULL
+    )
+"""
+
+_CREATE_HISTORY_TABLE = """
+    CREATE TABLE IF NOT EXISTS research_history (
+        user_id INTEGER PRIMARY KEY,
+        history_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
 """
 
@@ -135,11 +145,42 @@ def _execute(sql: str, args: tuple = ()) -> list[tuple]:
 @st.cache_resource
 def _init_db_once() -> bool:
     _execute(_CREATE_TABLE)
+    _execute(_CREATE_HISTORY_TABLE)
     return True
 
 
 def init_db() -> None:
-    _init_db_once()  
+    _init_db_once()  # cached: runs once per server process, not on every Streamlit rerun
+
+
+def load_user_history(user_id: int) -> list | None:
+    """Load one user's saved reports; None means no history row exists yet."""
+    rows = _execute(
+        "SELECT history_json FROM research_history WHERE user_id = ?",
+        (int(user_id),),
+    )
+    if not rows:
+        return None
+    try:
+        value = json.loads(rows[0][0])
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return value if isinstance(value, list) else []
+
+
+def save_user_history(user_id: int, history: list) -> None:
+    """Replace one user's saved history in the shared Turso/SQLite database."""
+    payload = json.dumps(history, ensure_ascii=False, separators=(",", ":"))
+    _execute(
+        """
+        INSERT INTO research_history (user_id, history_json, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id) DO UPDATE SET
+            history_json = excluded.history_json,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (int(user_id), payload),
+    )
 
 
 def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -193,6 +234,8 @@ def logout() -> None:
     """Wipe everything (user, history, results...) so nothing leaks to the next login."""
     st.session_state.clear()
 
+
+# st.dialog needs Streamlit >= 1.37 (older versions: experimental_dialog)
 _dialog = getattr(st, "dialog", None) or st.experimental_dialog
 
 
